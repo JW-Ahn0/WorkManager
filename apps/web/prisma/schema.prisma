@@ -1,0 +1,94 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Memo {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  rawText   String
+  context   Json?
+
+  minutes Minutes?
+
+  @@index([createdAt])
+}
+
+model Minutes {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  memoId String @unique
+  memo   Memo   @relation(fields: [memoId], references: [id], onDelete: Cascade)
+
+  title       String
+  date        String?
+  agenda      Json
+  decisions   Json
+  actionItems Json
+  notes       Json
+  confidence  Float?
+
+  appendedToWorklogAt DateTime?
+
+  @@index([createdAt])
+  @@index([memoId])
+}
+
+model WorklogEntry {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  date    String
+  project String   @default("")
+  contentMd String
+
+  @@unique([date, project])
+  @@index([date])
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+}
+
+model BoardWeek {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  // 일요일(00:00, KST) 기준 YYYY-MM-DD
+  weekStart String @unique
+  // 토요일(23:59:59, KST) 기준 YYYY-MM-DD
+  weekEnd   String
+
+  tasks Task[]
+
+  @@index([weekStart])
+}
+
+model Task {
+  id        String     @id @default(cuid())
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  title       String
+  description String   @default("")
+  status TaskStatus @default(TODO)
+  order  Int
+
+  boardId String
+  board   BoardWeek @relation(fields: [boardId], references: [id], onDelete: Cascade)
+
+  @@index([boardId, status, order])
+}
