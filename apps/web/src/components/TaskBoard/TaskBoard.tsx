@@ -155,6 +155,7 @@ export function TaskBoard() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [worklogOpen, setWorklogOpen] = useState(false);
 
   const grouped = useMemo(() => {
     const g: Record<Status, Task[]> = { TODO: [], IN_PROGRESS: [], DONE: [] };
@@ -169,6 +170,88 @@ export function TaskBoard() {
     () => tasks.find((t) => t.id === confirmDeleteId) ?? null,
     [tasks, confirmDeleteId],
   );
+
+  const currentWorklog = useMemo(() => {
+    const sections: { title: string; items: Task[] }[] = [
+      { title: "진행 예정 Task", items: grouped.TODO },
+      { title: "현재 진행중인 Task", items: grouped.IN_PROGRESS },
+      { title: "완료된 Task", items: grouped.DONE },
+    ];
+
+    const mdLines: string[] = [];
+    const txtLines: string[] = [];
+
+    mdLines.push(`# 업무일지`);
+    txtLines.push(`업무일지`);
+    if (board) {
+      mdLines.push(`- 기간: ${board.weekStart} ~ ${board.weekEnd} (일~토)`);
+      mdLines.push("");
+      txtLines.push(`기간: ${board.weekStart} ~ ${board.weekEnd} (일~토)`);
+      txtLines.push("");
+    } else {
+      mdLines.push("");
+      txtLines.push("");
+    }
+
+    for (const s of sections) {
+      mdLines.push(`## ${s.title}`);
+      txtLines.push(`${s.title}`);
+
+      if (s.items.length === 0) {
+        mdLines.push(`- (없음)`);
+        txtLines.push(`- (없음)`);
+      } else {
+        for (const t of s.items) {
+          mdLines.push(`- ${t.title}`);
+          txtLines.push(`- ${t.title}`);
+          if (t.description?.trim()) {
+            mdLines.push(`  - ${t.description.trim().split("\n").join("\n  - ")}`);
+            txtLines.push(`  - ${t.description.trim().split("\n").join("\n  - ")}`);
+          }
+        }
+      }
+      mdLines.push("");
+      txtLines.push("");
+    }
+
+    const html = [
+      `<h1>업무일지</h1>`,
+      board ? `<p><b>기간:</b> ${board.weekStart} ~ ${board.weekEnd} (일~토)</p>` : "",
+      ...sections.map((s) => {
+        const lis =
+          s.items.length === 0
+            ? `<li>(없음)</li>`
+            : s.items
+                .map((t) => {
+                  const desc = t.description?.trim()
+                    ? `<br/><span style="color:#555;">${escapeHtml(
+                        t.description.trim(),
+                      ).replace(/\n/g, "<br/>")}</span>`
+                    : "";
+                  return `<li><b>${escapeHtml(t.title)}</b>${desc}</li>`;
+                })
+                .join("");
+        return `<h2>${escapeHtml(s.title)}</h2><ul>${lis}</ul>`;
+      }),
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    return {
+      markdown: mdLines.join("\n").trim() + "\n",
+      text: txtLines.join("\n").trim() + "\n",
+      html,
+    };
+  }, [grouped, board]);
+
+  function escapeHtml(s: string) {
+    return s
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
 
   async function refresh() {
     try {
@@ -361,9 +444,13 @@ export function TaskBoard() {
             <Link className="text-sm text-zinc-700 underline" href="/memos">
               메모 입력
             </Link>
-            <Link className="text-sm text-zinc-700 underline" href="/worklog">
-              업무일지
-            </Link>
+            <button
+              type="button"
+              className="text-sm cursor-pointer text-zinc-700 underline"
+              onClick={() => setWorklogOpen(true)}
+            >
+              현재 기준으로 업무일지 생성
+            </button>
           </div>
           <input
             className="h-10 w-full min-w-[220px] lg:w-[360px] rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none focus:border-zinc-400"
@@ -412,6 +499,88 @@ export function TaskBoard() {
           ) : null}
         </DragOverlay>
       </DndContext>
+
+      {worklogOpen ? (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4"
+          onMouseDown={() => setWorklogOpen(false)}
+        >
+          <div
+            className="w-full max-w-2xl rounded-xl bg-white p-5 shadow-xl"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div className="grid gap-1">
+                <div className="text-sm font-semibold text-zinc-900">현재 기준 업무일지</div>
+                {board ? (
+                  <div className="text-xs text-zinc-500">
+                    {board.weekStart} ~ {board.weekEnd} (일~토)
+                  </div>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                className="h-9 cursor-pointer rounded-md border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700"
+                onClick={() => setWorklogOpen(false)}
+              >
+                닫기
+              </button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="h-9 cursor-pointer rounded-md bg-zinc-900 px-3 text-xs font-medium text-white"
+                onClick={async () => {
+                  await navigator.clipboard.writeText(currentWorklog.markdown);
+                }}
+              >
+                .md 형식으로 복사
+              </button>
+              <button
+                type="button"
+                className="h-9 cursor-pointer rounded-md bg-zinc-900 px-3 text-xs font-medium text-white"
+                onClick={async () => {
+                  await navigator.clipboard.writeText(currentWorklog.text);
+                }}
+              >
+                .txt 형식으로 복사
+              </button>
+              <button
+                type="button"
+                className="h-9 cursor-pointer rounded-md bg-zinc-900 px-3 text-xs font-medium text-white"
+                onClick={async () => {
+                  const html = currentWorklog.html;
+                  const plain = currentWorklog.text;
+                  // Word에 붙여넣기 용 (HTML clipboard)
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  const ClipboardItemCtor = (globalThis as any).ClipboardItem as
+                    | undefined
+                    | (new (items: Record<string, Blob>) => ClipboardItem);
+                  if (ClipboardItemCtor && navigator.clipboard.write) {
+                    const item = new ClipboardItemCtor({
+                      "text/html": new Blob([html], { type: "text/html" }),
+                      "text/plain": new Blob([plain], { type: "text/plain" }),
+                    });
+                    await navigator.clipboard.write([item]);
+                  } else {
+                    await navigator.clipboard.writeText(plain);
+                  }
+                }}
+              >
+                .word 형식으로 복사
+              </button>
+            </div>
+
+            <div className="mt-3 grid gap-2">
+              <div className="text-xs font-medium text-zinc-600">미리보기(Markdown)</div>
+              <pre className="max-h-[340px] overflow-auto whitespace-pre-wrap rounded-md bg-zinc-50 p-3 text-xs text-zinc-800">
+                {currentWorklog.markdown}
+              </pre>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {history.length ? (
         <section className="mt-2 grid gap-3">

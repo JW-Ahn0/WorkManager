@@ -4,7 +4,12 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 
 type ApiResponse = {
-  memo: { id: string; createdAt: string; rawText: string; context: unknown | null };
+  memo: {
+    id: string;
+    createdAt: string;
+    rawText: string;
+    context: unknown | null;
+  };
   minutes: {
     id: string;
     createdAt: string;
@@ -16,10 +21,21 @@ type ApiResponse = {
     actionItems: unknown;
     notes: unknown;
     confidence: number | null;
-  };
-  worklog: { id: string; date: string; project: string; contentMd: string } | null;
+  } | null;
+  worklog: {
+    id: string;
+    date: string;
+    project: string;
+    contentMd: string;
+  } | null;
   createdTasks:
-    | { id: string; title: string; description: string; status: string; order: number }[]
+    | {
+        id: string;
+        title: string;
+        description: string;
+        status: string;
+        order: number;
+      }[]
     | null;
 };
 
@@ -30,7 +46,10 @@ export function MemoForm() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ApiResponse | null>(null);
 
-  const canSubmit = useMemo(() => rawText.trim().length > 0 && !busy, [rawText, busy]);
+  const canSubmit = useMemo(
+    () => rawText.trim().length > 0 && !busy,
+    [rawText, busy]
+  );
 
   async function onSubmit() {
     setBusy(true);
@@ -45,8 +64,9 @@ export function MemoForm() {
           context: {
             date: date.trim() || undefined,
           },
-          appendToWorklog: true,
           createTasks: true,
+          generateMinutes: false,
+          appendToWorklog: false,
         }),
       });
 
@@ -79,7 +99,7 @@ export function MemoForm() {
               </div>
             </div>
             <div className="mt-2 text-xs text-zinc-600">
-              메모 정리와 작업 보드 반영까지 처리하고 있어요.
+              번호로 정리된 항목을 추출해서 작업 보드(Todo)에 추가하고 있어요.
             </div>
           </div>
         </div>
@@ -96,7 +116,11 @@ export function MemoForm() {
             // 일부 브라우저는 showPicker() 호출 시 "user gesture" 제약이 있음.
             // 가능한 경우에만 시도하고, 거부되면 기본 동작(type="date")에 맡긴다.
             try {
-              (e.currentTarget as HTMLInputElement & { showPicker?: () => void }).showPicker?.();
+              (
+                e.currentTarget as HTMLInputElement & {
+                  showPicker?: () => void;
+                }
+              ).showPicker?.();
             } catch {
               // ignore
             }
@@ -110,7 +134,7 @@ export function MemoForm() {
           className="min-h-40 w-full resize-y rounded-md border border-zinc-200 bg-white p-3 text-sm leading-6 outline-none focus:border-zinc-400"
           value={rawText}
           onChange={(e) => setRawText(e.target.value)}
-          placeholder={"예:\n- A안 vs B안 논의\n- 다음주까지 견적\n- 로그인 필요없음\n- 배포는 Netlify"}
+          placeholder={"예:\n- 1. A안 vs B안 논의\n- 2. 다음주까지 견적\n"}
         />
       </label>
 
@@ -121,11 +145,8 @@ export function MemoForm() {
           onClick={onSubmit}
           className="inline-flex h-10 items-center justify-center rounded-md bg-black px-4 text-sm font-medium text-white disabled:opacity-40"
         >
-          {busy ? "정리 중..." : "회의록/업무일지로 정리"}
+          {busy ? "생성 중..." : "Memo로 Task 생성"}
         </button>
-        <Link className="text-sm text-zinc-600 underline" href="/worklog">
-          업무일지
-        </Link>
         <Link className="text-sm text-zinc-600 underline" href="/">
           작업 보드
         </Link>
@@ -152,26 +173,9 @@ export function MemoForm() {
               </div>
             </div>
           ) : null}
-          <div className="grid gap-1">
-            <div className="text-sm font-semibold">생성된 회의록(원본 JSON 저장됨)</div>
-            <div className="text-xs text-zinc-500">
-              memoId: {result.memo.id} / minutesId: {result.minutes.id}
-            </div>
-          </div>
-          <pre className="overflow-auto rounded-md bg-zinc-950 p-3 text-xs text-zinc-100">
-            {JSON.stringify(result.minutes, null, 2)}
-          </pre>
-          {result.worklog ? (
-            <>
-              <div className="text-sm font-semibold">업무일지 누적(Markdown)</div>
-              <pre className="overflow-auto rounded-md bg-zinc-50 p-3 text-xs text-zinc-800">
-                {result.worklog.contentMd}
-              </pre>
-            </>
-          ) : null}
+          <div className="text-xs text-zinc-500">memoId: {result.memo.id}</div>
         </div>
       ) : null}
     </div>
   );
 }
-

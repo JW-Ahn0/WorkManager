@@ -19,8 +19,9 @@ const CreateMemoBody = z.object({
     })
     .passthrough()
     .optional(),
-  appendToWorklog: z.boolean().optional().default(true),
   createTasks: z.boolean().optional().default(true),
+  generateMinutes: z.boolean().optional().default(false),
+  appendToWorklog: z.boolean().optional().default(false),
 });
 
 export async function POST(req: Request) {
@@ -36,64 +37,80 @@ export async function POST(req: Request) {
     },
   });
 
-  const minutes = await generateMinutesFromMemo({
-    rawText: memo.rawText,
-    context: body.context ?? undefined,
-  });
-
-  const minutesRow = await prisma.minutes.create({
-    data: {
-      memoId: memo.id,
-      title: minutes.title,
-      date: minutes.date ?? null,
-      agenda: minutes.agenda,
-      decisions: minutes.decisions,
-      actionItems: minutes.actionItems,
-      notes: minutes.notes,
-      confidence: minutes.confidence ?? null,
-    },
-  });
+  let minutesRow: {
+    id: string;
+    createdAt: Date;
+    memoId: string;
+    title: string;
+    date: string | null;
+    agenda: unknown;
+    decisions: unknown;
+    actionItems: unknown;
+    notes: unknown;
+    confidence: number | null;
+  } | null = null;
+  let minutes: Awaited<ReturnType<typeof generateMinutesFromMemo>> | null = null;
 
   let worklog: { id: string; date: string; project: string; contentMd: string } | null = null;
   let createdTasks:
     | { id: string; title: string; description: string; status: string; order: number }[]
     | null = null;
 
-  if (body.appendToWorklog) {
-    const date = body.context?.date?.trim() || resolveWorklogDate(minutes);
-    const project = body.context?.project?.trim() || "";
+  if (body.generateMinutes || body.appendToWorklog) {
+    minutes = await generateMinutesFromMemo({
+      rawText: memo.rawText,
+      context: body.context ?? undefined,
+    });
 
-    const appendMd = minutesToWorklogMarkdown({ minutes, date, project });
+    minutesRow = await prisma.minutes.create({
+      data: {
+        memoId: memo.id,
+        title: minutes.title,
+        date: minutes.date ?? null,
+        agenda: minutes.agenda,
+        decisions: minutes.decisions,
+        actionItems: minutes.actionItems,
+        notes: minutes.notes,
+        confidence: minutes.confidence ?? null,
+      },
+    });
 
-    const upserted = await prisma.$transaction(async (tx) => {
-      const existing = await tx.worklogEntry.findUnique({
-        where: { date_project: { date, project } },
-      });
+    if (body.appendToWorklog) {
+      const date = body.context?.date?.trim() || resolveWorklogDate(minutes);
+      const project = body.context?.project?.trim() || "";
 
-      if (!existing) {
-        return await tx.worklogEntry.create({
-          data: { date, project, contentMd: appendMd },
+      const appendMd = minutesToWorklogMarkdown({ minutes, date, project });
+
+      const upserted = await prisma.$transaction(async (tx) => {
+        const existing = await tx.worklogEntry.findUnique({
+          where: { date_project: { date, project } },
         });
-      }
 
-      const nextContent = existing.contentMd.trimEnd() + "\n\n" + appendMd.trimStart();
-      return await tx.worklogEntry.update({
-        where: { id: existing.id },
-        data: { contentMd: nextContent },
+        if (!existing) {
+          return await tx.worklogEntry.create({
+            data: { date, project, contentMd: appendMd },
+          });
+        }
+
+        const nextContent = existing.contentMd.trimEnd() + "\n\n" + appendMd.trimStart();
+        return await tx.worklogEntry.update({
+          where: { id: existing.id },
+          data: { contentMd: nextContent },
+        });
       });
-    });
 
-    worklog = {
-      id: upserted.id,
-      date: upserted.date,
-      project: upserted.project,
-      contentMd: upserted.contentMd,
-    };
+      worklog = {
+        id: upserted.id,
+        date: upserted.date,
+        project: upserted.project,
+        contentMd: upserted.contentMd,
+      };
 
-    await prisma.minutes.update({
-      where: { id: minutesRow.id },
-      data: { appendedToWorklogAt: new Date() },
-    });
+      await prisma.minutes.update({
+        where: { id: minutesRow.id },
+        data: { appendedToWorklogAt: new Date() },
+      });
+    }
   }
 
   if (body.createTasks) {
@@ -111,7 +128,7 @@ export async function POST(req: Request) {
           prisma.task.create({
             data: {
               boardId: board.id,
-              title: t.name,
+              title: `${t.index}. ${t.name}`,
               description: t.description ?? "",
               status: "TODO",
               order: nextOrder++,
