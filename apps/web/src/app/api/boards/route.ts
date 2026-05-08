@@ -27,7 +27,7 @@ export async function GET(req: Request) {
 
     const tasksByBoard = await prisma.task.findMany({
       where: { boardId: { in: boards.map((b) => b.id) } },
-      orderBy: [{ boardId: "asc" }, { status: "asc" }, { order: "asc" }, { createdAt: "asc" }],
+      orderBy: [{ boardId: "asc" }, { status: "asc" }, { createdAt: "desc" }, { order: "asc" }],
       select: {
         id: true,
         boardId: true,
@@ -35,6 +35,7 @@ export async function GET(req: Request) {
         description: true,
         status: true,
         order: true,
+        createdAt: true,
       },
     });
 

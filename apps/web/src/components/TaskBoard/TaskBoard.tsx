@@ -24,8 +24,20 @@ import { CSS } from "@dnd-kit/utilities";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
+import { copyHtmlForWord, copyPlainText } from "@/lib/clipboard";
+
+const CLICK_FEEL =
+  "transition active:scale-[0.98] active:translate-y-[0.5px] active:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 focus-visible:ring-offset-2";
+
 type Status = "TODO" | "IN_PROGRESS" | "DONE";
-type Task = { id: string; title: string; description: string; status: Status; order: number };
+type Task = {
+  id: string;
+  title: string;
+  description: string;
+  status: Status;
+  order: number;
+  createdAt: string;
+};
 type Board = { id: string; weekStart: string; weekEnd: string };
 type BoardWithTasks = { id: string; weekStart: string; weekEnd: string; tasks: Task[] };
 
@@ -35,12 +47,25 @@ const COLUMNS: { id: Status; title: string }[] = [
   { id: "DONE", title: "Done" },
 ];
 
-function byOrder(a: Task, b: Task) {
-  return a.order - b.order;
+function byCreatedAtDesc(a: Task, b: Task) {
+  const ta = Date.parse(a.createdAt);
+  const tb = Date.parse(b.createdAt);
+  if (Number.isFinite(ta) && Number.isFinite(tb) && ta !== tb) return tb - ta;
+  return b.order - a.order;
 }
 
 function statusTitle(status: Status) {
   return COLUMNS.find((c) => c.id === status)?.title ?? status;
+}
+
+function formatYmdCompact(input: string) {
+  const t = Date.parse(input);
+  if (!Number.isFinite(t)) return null;
+  const d = new Date(t);
+  const yyyy = String(d.getFullYear());
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}.${mm}.${dd}`;
 }
 
 function TaskCard(props: {
@@ -50,6 +75,9 @@ function TaskCard(props: {
   onOpen: (id: string) => void;
 }) {
   const { task } = props;
+  const createdLabel = useMemo(() => {
+    return formatYmdCompact(task.createdAt);
+  }, [task.createdAt]);
   const sortable = useSortable({ id: task.id, data: { type: "task", task } });
   const style = {
     transform: CSS.Transform.toString(sortable.transform),
@@ -67,33 +95,40 @@ function TaskCard(props: {
         sortable.isDragging ? "opacity-50" : "",
       ].join(" ")}
     >
-      <button
-        type="button"
-        className="mb-2 w-full text-left text-sm font-medium text-zinc-900"
-        onClick={(e) => {
-          e.stopPropagation();
-          props.onOpen(task.id);
-        }}
-      >
-        {task.title}
-      </button>
-      <div className="flex items-center gap-2">
-        {task.status !== "DONE" ? (
-          <button
-            type="button"
-            onClick={() => props.onComplete(task.id)}
-            className="h-8 cursor-pointer rounded-md bg-black px-3 text-xs font-medium text-white"
-          >
-            완료
-          </button>
-        ) : null}
+      <div className="mb-2 flex items-start justify-between gap-3">
         <button
           type="button"
-          onClick={() => props.onDelete(task.id)}
-          className="h-8 cursor-pointer rounded-md border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700"
+          className={`min-w-0 flex-1 text-left text-sm font-medium text-zinc-900 ${CLICK_FEEL}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            props.onOpen(task.id);
+          }}
         >
-          삭제
+          {task.title}
         </button>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          {task.status !== "DONE" ? (
+            <button
+              type="button"
+              onClick={() => props.onComplete(task.id)}
+              className={`h-8 cursor-pointer rounded-md bg-black px-3 text-xs font-medium text-white ${CLICK_FEEL}`}
+            >
+              완료
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => props.onDelete(task.id)}
+            className={`h-8 cursor-pointer rounded-md border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 ${CLICK_FEEL}`}
+          >
+            삭제
+          </button>
+        </div>
+        {createdLabel ? (
+          <div className="shrink-0 text-[11px] text-zinc-500">생성:{createdLabel}</div>
+        ) : null}
       </div>
     </div>
   );
@@ -150,17 +185,27 @@ export function TaskBoard() {
   const [history, setHistory] = useState<BoardWithTasks[]>([]);
   const [openWeeks, setOpenWeeks] = useState<Record<string, boolean>>({});
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [newTitle, setNewTitle] = useState("");
   const [busy, setBusy] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [worklogOpen, setWorklogOpen] = useState(false);
+  const [newTaskOpen, setNewTaskOpen] = useState(false);
+  const [newTaskDate, setNewTaskDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [newTaskName, setNewTaskName] = useState("");
+  const [newTaskContent, setNewTaskContent] = useState("");
+  const [toast, setToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 1800);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   const grouped = useMemo(() => {
     const g: Record<Status, Task[]> = { TODO: [], IN_PROGRESS: [], DONE: [] };
     for (const t of tasks) g[t.status].push(t);
-    for (const k of Object.keys(g) as Status[]) g[k].sort(byOrder);
+    for (const k of Object.keys(g) as Status[]) g[k].sort(byCreatedAtDesc);
     return g;
   }, [tasks]);
 
@@ -288,31 +333,42 @@ export function TaskBoard() {
     void refreshHistory();
   }, []);
 
-  async function createTask() {
-    const title = newTitle.trim();
+  function resetNewTaskModal() {
+    setNewTaskDate(new Date().toISOString().slice(0, 10));
+    setNewTaskName("");
+    setNewTaskContent("");
+  }
+
+  async function createTaskFromModal() {
+    const title = newTaskName.trim();
     if (!title) return;
+    const content = newTaskContent.trim();
+    const date = newTaskDate.trim();
+    const description = [date ? `날짜: ${date}` : "", content].filter(Boolean).join("\n\n");
     setBusy(true);
     try {
       await fetch("/api/tasks", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ title }),
+        body: JSON.stringify({ title, description }),
       });
-      setNewTitle("");
       await refresh();
+      setNewTaskOpen(false);
+      resetNewTaskModal();
     } finally {
       setBusy(false);
     }
   }
 
-  async function updateDescription(id: string, description: string) {
+  async function updateTaskFields(id: string, input: { title?: string; description?: string }) {
     setBusy(true);
     try {
-      await fetch(`/api/tasks/${id}`, {
+      const res = await fetch(`/api/tasks/${id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ description }),
+        body: JSON.stringify(input),
       });
+      if (!res.ok) throw new Error(await res.text());
       await refresh();
     } finally {
       setBusy(false);
@@ -422,6 +478,13 @@ export function TaskBoard() {
 
   return (
     <div className="grid gap-5">
+      {toast ? (
+        <div className="fixed inset-x-0 bottom-4 z-90 flex justify-center px-4">
+          <div className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white shadow-lg">
+            {toast}
+          </div>
+        </div>
+      ) : null}
       {loadError ? (
         <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
           {loadError}
@@ -440,36 +503,29 @@ export function TaskBoard() {
           ) : null}
         </div>
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:gap-3">
-          <div className="flex items-center gap-3 whitespace-nowrap">
-            <Link className="text-sm text-zinc-700 underline" href="/memos">
+          <div className="flex flex-wrap items-center gap-2 whitespace-nowrap">
+            <Link
+              className={`inline-flex h-10 items-center justify-center rounded-md bg-black px-4 text-sm font-medium text-white ${CLICK_FEEL}`}
+              href="/memos"
+            >
               메모 입력
             </Link>
             <button
               type="button"
-              className="text-sm cursor-pointer text-zinc-700 underline"
+              className={`inline-flex h-10 cursor-pointer items-center justify-center rounded-md border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-800 ${CLICK_FEEL}`}
               onClick={() => setWorklogOpen(true)}
             >
-              현재 기준으로 업무일지 생성
+              현재 기준 업무일지 생성
+            </button>
+            <button
+              type="button"
+              className={`inline-flex h-10 cursor-pointer items-center justify-center rounded-md bg-black px-4 text-sm font-medium text-white disabled:opacity-40 ${CLICK_FEEL}`}
+              onClick={() => setNewTaskOpen(true)}
+              disabled={busy}
+            >
+              + New Task
             </button>
           </div>
-          <input
-            className="h-10 w-full min-w-[220px] lg:w-[360px] rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none focus:border-zinc-400"
-            placeholder="새 작업 입력..."
-            value={newTitle}
-            onChange={(e) => setNewTitle(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void createTask();
-            }}
-            disabled={busy}
-          />
-          <button
-            type="button"
-            onClick={() => void createTask()}
-            disabled={busy || !newTitle.trim()}
-            className="h-10 whitespace-nowrap rounded-md bg-black px-4 text-sm font-medium text-white disabled:opacity-40"
-          >
-            추가
-          </button>
         </div>
       </div>
 
@@ -502,7 +558,7 @@ export function TaskBoard() {
 
       {worklogOpen ? (
         <div
-          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4"
+          className="fixed inset-0 z-70 flex items-center justify-center bg-black/40 p-4"
           onMouseDown={() => setWorklogOpen(false)}
         >
           <div
@@ -520,7 +576,7 @@ export function TaskBoard() {
               </div>
               <button
                 type="button"
-                className="h-9 cursor-pointer rounded-md border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700"
+                className={`h-9 cursor-pointer rounded-md border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 ${CLICK_FEEL}`}
                 onClick={() => setWorklogOpen(false)}
               >
                 닫기
@@ -530,45 +586,69 @@ export function TaskBoard() {
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                className="h-9 cursor-pointer rounded-md bg-zinc-900 px-3 text-xs font-medium text-white"
+                className={`h-9 cursor-pointer rounded-md bg-zinc-900 px-3 text-xs font-medium text-white ${CLICK_FEEL}`}
                 onClick={async () => {
-                  await navigator.clipboard.writeText(currentWorklog.markdown);
+                  try {
+                    await copyPlainText(currentWorklog.markdown);
+                    setToast("클립보드에 복사되었습니다.");
+                  } catch {
+                    alert("복사에 실패했습니다. HTTPS 또는 localhost 로 접속했는지 확인해 주세요.");
+                  }
                 }}
               >
                 .md 형식으로 복사
               </button>
               <button
                 type="button"
-                className="h-9 cursor-pointer rounded-md bg-zinc-900 px-3 text-xs font-medium text-white"
+                className={`h-9 cursor-pointer rounded-md bg-zinc-900 px-3 text-xs font-medium text-white ${CLICK_FEEL}`}
                 onClick={async () => {
-                  await navigator.clipboard.writeText(currentWorklog.text);
+                  try {
+                    await copyPlainText(currentWorklog.text);
+                    setToast("클립보드에 복사되었습니다.");
+                  } catch {
+                    alert("복사에 실패했습니다. HTTPS 또는 localhost 로 접속했는지 확인해 주세요.");
+                  }
                 }}
               >
                 .txt 형식으로 복사
               </button>
               <button
                 type="button"
-                className="h-9 cursor-pointer rounded-md bg-zinc-900 px-3 text-xs font-medium text-white"
+                className={`h-9 cursor-pointer rounded-md bg-zinc-900 px-3 text-xs font-medium text-white ${CLICK_FEEL}`}
                 onClick={async () => {
-                  const html = currentWorklog.html;
-                  const plain = currentWorklog.text;
-                  // Word에 붙여넣기 용 (HTML clipboard)
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  const ClipboardItemCtor = (globalThis as any).ClipboardItem as
-                    | undefined
-                    | (new (items: Record<string, Blob>) => ClipboardItem);
-                  if (ClipboardItemCtor && navigator.clipboard.write) {
-                    const item = new ClipboardItemCtor({
-                      "text/html": new Blob([html], { type: "text/html" }),
-                      "text/plain": new Blob([plain], { type: "text/plain" }),
-                    });
-                    await navigator.clipboard.write([item]);
-                  } else {
-                    await navigator.clipboard.writeText(plain);
+                  try {
+                    await copyHtmlForWord(currentWorklog.html, currentWorklog.text);
+                    setToast("클립보드에 복사되었습니다.");
+                  } catch {
+                    alert("복사에 실패했습니다. HTTPS 또는 localhost 로 접속했는지 확인해 주세요.");
                   }
                 }}
               >
                 .word 형식으로 복사
+              </button>
+              <button
+                type="button"
+                className={`h-9 cursor-pointer rounded-md bg-black px-3 text-xs font-medium text-white ${CLICK_FEEL}`}
+                onClick={async () => {
+                  try {
+                    const res = await fetch("/api/worklog/docx");
+                    if (!res.ok) throw new Error(await res.text());
+                    const blob = await res.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `업무일지_${new Date().toISOString().slice(0, 10).replaceAll("-", ".")}.docx`;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    URL.revokeObjectURL(url);
+                    setToast("Word 파일을 다운로드했습니다.");
+                  } catch (e) {
+                    alert(e instanceof Error ? e.message : "다운로드에 실패했습니다.");
+                  }
+                }}
+              >
+                양식에 자동작성
               </button>
             </div>
 
@@ -582,6 +662,128 @@ export function TaskBoard() {
         </div>
       ) : null}
 
+      {newTaskOpen ? (
+        <div
+          className="fixed inset-0 z-70 flex items-center justify-center bg-black/40 p-4"
+          onMouseDown={() => {
+            setNewTaskOpen(false);
+            resetNewTaskModal();
+          }}
+        >
+          <div
+            className="w-full max-w-lg rounded-xl bg-white p-5 shadow-xl"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div className="grid gap-1">
+                <div className="text-sm font-semibold text-zinc-900">새 작업 추가</div>
+                <div className="text-xs text-zinc-500">Todo 컬럼에 추가됩니다.</div>
+              </div>
+              <button
+                type="button"
+                className={`h-9 cursor-pointer rounded-md border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 ${CLICK_FEEL}`}
+                onClick={() => {
+                  setNewTaskOpen(false);
+                  resetNewTaskModal();
+                }}
+              >
+                닫기
+              </button>
+            </div>
+
+            <div className="grid gap-3">
+              <label className="grid gap-1">
+                <span className="text-xs font-medium text-zinc-700">날짜</span>
+                <input
+                  type="date"
+                  className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none focus:border-zinc-400"
+                  value={newTaskDate}
+                  onChange={(e) => setNewTaskDate(e.target.value)}
+                  onPointerDown={(e) => {
+                    // 일부 브라우저는 showPicker() 호출 시 "user gesture" 제약이 있음.
+                    // 가능한 경우에만 시도하고, 거부되면 기본 동작(type="date")에 맡긴다.
+                    // mouse에서는 pointerdown에서 열어도 안정적.
+                    if (e.pointerType && e.pointerType !== "mouse") return;
+                    try {
+                      (
+                        e.currentTarget as HTMLInputElement & {
+                          showPicker?: () => void;
+                        }
+                      ).showPicker?.();
+                    } catch {
+                      // ignore
+                    }
+                  }}
+                  onClick={(e) => {
+                    // 일부 모바일 브라우저는 입력칸 탭 시 피커가 안 뜨고 아이콘만 동작함.
+                    // coarse pointer(터치) 환경에서는 click에서 showPicker를 시도한다.
+                    if (!globalThis.matchMedia?.("(pointer: coarse)")?.matches) return;
+                    try {
+                      const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
+                      // click 내에서 즉시 호출이 닫힘을 유발하는 브라우저가 있어 한 프레임 뒤에 호출
+                      requestAnimationFrame(() => {
+                        try {
+                          el.showPicker?.();
+                        } catch {
+                          // ignore
+                        }
+                      });
+                    } catch {
+                      // ignore
+                    }
+                  }}
+                  disabled={busy}
+                />
+              </label>
+
+              <label className="grid gap-1">
+                <span className="text-xs font-medium text-zinc-700">테스크 이름</span>
+                <input
+                  className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none focus:border-zinc-400"
+                  value={newTaskName}
+                  onChange={(e) => setNewTaskName(e.target.value)}
+                  placeholder="예: 견적 요청 메일 보내기"
+                  disabled={busy}
+                />
+              </label>
+
+              <label className="grid gap-1">
+                <span className="text-xs font-medium text-zinc-700">테스크 내용</span>
+                <textarea
+                  className="min-h-28 w-full resize-y rounded-md border border-zinc-200 bg-white p-3 text-sm leading-6 outline-none focus:border-zinc-400"
+                  value={newTaskContent}
+                  onChange={(e) => setNewTaskContent(e.target.value)}
+                  placeholder={"필요하면 상세 내용을 적어주세요.\n(비워도 됩니다)"}
+                  disabled={busy}
+                />
+              </label>
+
+              <div className="mt-1 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  className={`h-10 cursor-pointer rounded-md border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-700 ${CLICK_FEEL}`}
+                  onClick={() => {
+                    setNewTaskOpen(false);
+                    resetNewTaskModal();
+                  }}
+                  disabled={busy}
+                >
+                  닫기
+                </button>
+                <button
+                  type="button"
+                  className={`h-10 cursor-pointer rounded-md bg-black px-4 text-sm font-medium text-white disabled:opacity-40 ${CLICK_FEEL}`}
+                  onClick={() => void createTaskFromModal()}
+                  disabled={busy || !newTaskName.trim()}
+                >
+                  추가
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {history.length ? (
         <section className="mt-2 grid gap-3">
           <div className="text-sm font-semibold text-zinc-900">지난 주 보드</div>
@@ -590,7 +792,7 @@ export function TaskBoard() {
               const isOpen = !!openWeeks[b.weekStart];
               const groupedHistory: Record<Status, Task[]> = { TODO: [], IN_PROGRESS: [], DONE: [] };
               for (const t of b.tasks) groupedHistory[t.status].push(t);
-              for (const k of Object.keys(groupedHistory) as Status[]) groupedHistory[k].sort(byOrder);
+              for (const k of Object.keys(groupedHistory) as Status[]) groupedHistory[k].sort(byCreatedAtDesc);
 
               return (
                 <div key={b.id} className="rounded-xl border border-zinc-200 bg-white">
@@ -661,12 +863,33 @@ export function TaskBoard() {
           >
             <div className="mb-3 flex items-start justify-between gap-3">
               <div className="grid gap-1">
-                <div className="text-sm font-semibold text-zinc-900">{openTask.title}</div>
-                <div className="text-xs text-zinc-500">{statusTitle(openTask.status)}</div>
+                <label className="grid gap-1">
+                  <span className="text-xs font-medium text-zinc-600">제목</span>
+                  <input
+                    className="h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-900 outline-none focus:border-zinc-400"
+                    value={openTask.title ?? ""}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setTasks((prev) =>
+                        prev.map((t) => (t.id === openTask.id ? { ...t, title: next } : t)),
+                      );
+                    }}
+                    placeholder="제목을 입력하세요."
+                    disabled={busy}
+                  />
+                </label>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-500">
+                  <span>{statusTitle(openTask.status)}</span>
+                  <span className="text-zinc-300">•</span>
+                  <span>
+                    생성:{" "}
+                    {formatYmdCompact(openTask.createdAt) ?? "-"}
+                  </span>
+                </div>
               </div>
               <button
                 type="button"
-                className="rounded-md border border-zinc-200 px-3 py-1 text-xs font-medium text-zinc-700"
+                className={`rounded-md border border-zinc-200 px-3 py-1 text-xs font-medium text-zinc-700 ${CLICK_FEEL}`}
                 onClick={() => setOpenId(null)}
               >
                 닫기
@@ -695,7 +918,7 @@ export function TaskBoard() {
                   <button
                     type="button"
                     onClick={() => void completeTask(openTask.id)}
-                    className="h-9 cursor-pointer rounded-md bg-black px-3 text-xs font-medium text-white"
+                    className={`h-9 cursor-pointer rounded-md bg-black px-3 text-xs font-medium text-white ${CLICK_FEEL}`}
                     disabled={busy}
                   >
                     완료
@@ -704,7 +927,7 @@ export function TaskBoard() {
                 <button
                   type="button"
                   onClick={() => requestDelete(openTask.id)}
-                  className="h-9 cursor-pointer rounded-md border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700"
+                  className={`h-9 cursor-pointer rounded-md border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 ${CLICK_FEEL}`}
                   disabled={busy}
                 >
                   삭제
@@ -713,8 +936,19 @@ export function TaskBoard() {
 
               <button
                 type="button"
-                onClick={() => void updateDescription(openTask.id, openTask.description ?? "")}
-                className="h-9 cursor-pointer rounded-md bg-zinc-900 px-3 text-xs font-medium text-white disabled:opacity-40"
+                onClick={async () => {
+                  try {
+                    await updateTaskFields(openTask.id, {
+                      title: openTask.title?.trim() || undefined,
+                      description: openTask.description ?? "",
+                    });
+                    setOpenId(null);
+                    setToast("저장되었습니다.");
+                  } catch (e) {
+                    alert(e instanceof Error ? e.message : "저장에 실패했습니다.");
+                  }
+                }}
+                className={`h-9 cursor-pointer rounded-md bg-zinc-900 px-3 text-xs font-medium text-white disabled:opacity-40 ${CLICK_FEEL}`}
                 disabled={busy}
               >
                 저장
@@ -726,7 +960,7 @@ export function TaskBoard() {
 
       {confirmDeleteTask ? (
         <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
+          className="fixed inset-0 z-60 flex items-center justify-center bg-black/40 p-4"
           onMouseDown={() => setConfirmDeleteId(null)}
         >
           <div
@@ -740,7 +974,7 @@ export function TaskBoard() {
             <div className="mt-4 flex items-center justify-end gap-2">
               <button
                 type="button"
-                className="h-9 cursor-pointer rounded-md border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700"
+                className={`h-9 cursor-pointer rounded-md border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 ${CLICK_FEEL}`}
                 onClick={() => setConfirmDeleteId(null)}
                 disabled={busy}
               >
@@ -748,7 +982,7 @@ export function TaskBoard() {
               </button>
               <button
                 type="button"
-                className="h-9 cursor-pointer rounded-md bg-red-600 px-3 text-xs font-medium text-white disabled:opacity-40"
+                className={`h-9 cursor-pointer rounded-md bg-red-600 px-3 text-xs font-medium text-white disabled:opacity-40 ${CLICK_FEEL}`}
                 onClick={async () => {
                   const id = confirmDeleteTask.id;
                   setConfirmDeleteId(null);

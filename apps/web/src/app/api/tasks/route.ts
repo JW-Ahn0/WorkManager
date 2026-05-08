@@ -14,7 +14,7 @@ export async function GET() {
     const board = await ensureCurrentBoard();
     const tasks = await prisma.task.findMany({
       where: { boardId: board.id },
-      orderBy: [{ status: "asc" }, { order: "asc" }, { createdAt: "asc" }],
+      orderBy: [{ status: "asc" }, { createdAt: "desc" }, { order: "asc" }],
     });
     return NextResponse.json({ board, tasks });
   } catch (e) {

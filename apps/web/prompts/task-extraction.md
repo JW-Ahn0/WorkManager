@@ -23,6 +23,7 @@ WHAT COUNTS AS A TASK
 REWRITE / CLEANUP (do NOT copy verbatim)
 - Make `name` short (one line) and action-oriented (verb phrase).
 - Put details/constraints/context into `description`.
+- Do NOT include any numbering/bullets in `name` (no `1.`, `2)`, `-`, `*`, `•` prefixes). The UI will handle ordering.
 - If there is no meaningful extra detail, set `description` to null.
 
 ORDERING / INDEXING

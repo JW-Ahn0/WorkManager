@@ -128,12 +128,12 @@ export async function POST(req: Request) {
           prisma.task.create({
             data: {
               boardId: board.id,
-              title: `${t.index}. ${t.name}`,
+              title: t.name.replace(/^\s*[-*•]+\s*/, "").replace(/^\s*\d+[\.\)]\s+/, "").trim(),
               description: t.description ?? "",
               status: "TODO",
               order: nextOrder++,
             },
-            select: { id: true, title: true, description: true, status: true, order: true },
+            select: { id: true, title: true, description: true, status: true, order: true, createdAt: true },
           }),
         ),
       );
